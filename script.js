@@ -60,11 +60,20 @@ class Platform {
         this.broken = false;
     }
 
-    update() {
+    update(deltaTime, player) {
+        if (this.broken) return;
+
         if (this.type === "moving") {
+            const oldX = this.x;
             this.x += this.dir * 1.2;
-            if (this.x > this.baseX + 120 || this.x < this.baseX - 120) {
-                this.dir *= -1;
+            if (this.x > this.baseX + 120 || this.x < this.baseX - 120) this.dir *= -1;
+
+            // push player if standing on moving platform
+            if (player.onGround &&
+                player.y + player.height === this.y &&
+                player.x + player.width > this.x &&
+                player.x < this.x + this.width) {
+                player.x += this.x - oldX;
             }
         }
     }
@@ -72,14 +81,24 @@ class Platform {
     draw() {
         if (this.broken) return;
 
-        if (this.type === "normal") ctx.fillStyle = "#0f0";
-        if (this.type === "fragile") ctx.fillStyle = "#ff0";
-        if (this.type === "moving") ctx.fillStyle = "#0ff";
-        if (this.type === "wall") ctx.fillStyle = "#f0f";
-
-        ctx.fillRect(this.x, this.y, this.width, this.height);
+        // fragile shake effect
+        if (this.type === "fragile") {
+            ctx.save();
+            ctx.translate(Math.random() * 1.5 - 0.75, Math.random() * 1.5 - 0.75);
+            ctx.fillStyle = "#ff0";
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+            ctx.restore();
+        } else {
+            switch (this.type) {
+                case "normal": ctx.fillStyle = "#0f0"; break;
+                case "moving": ctx.fillStyle = "#0ff"; break;
+                case "wall": ctx.fillStyle = "#f0f"; break;
+            }
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+        }
     }
 }
+
 
 function generateLevelPlatforms(totalLevels = 10, platformsPerLevel = 7) {
     const platforms = [];
@@ -372,15 +391,38 @@ class Player {
         this.onWallDir = 0;
         // Simple AABB collision detection with platforms
         for (const p of platforms) {
+            if (p.broken) continue;
             if (this.x < p.x + p.width &&
                 this.x + this.width > p.x &&
                 this.y < p.y + p.height &&
                 this.y + this.height > p.y) {
                 // from top (landing)
                 if (this.vy > 0 && (this.y + this.height - this.vy) <= p.y) {
-                    this.y = p.y - this.height; this.vy = 0; this.onGround = true; this.lastGroundTime = Date.now();
+                    this.y = p.y - this.height;
+                    this.vy = 0;
+                    this.onGround = true;
+                    this.lastGroundTime = Date.now();
                     this.inAirTime = 0;
+
+                    // ✅ PLATFORME FRAGILE
+                    if (p.type === "fragile" && !p.broken) {
+                        p.broken = true;
+
+                        // petit délai avant la chute
+                        setTimeout(() => {
+                            spawnParticles(
+                                p.x + p.width / 2,
+                                p.y,
+                                16,
+                                2,
+                                3,
+                                3,
+                                350
+                            );
+                        }, 120);
+                    }
                 }
+
                 // from bottom (head hit)
                 else if (this.vy < 0 && (this.y - this.vy) >= p.y + p.height) {
                     this.y = p.y + p.height; this.vy = 0;
@@ -396,8 +438,9 @@ class Player {
                     this.x = p.x + p.width; this.vx = 0;
                     if (!this.onGround) { this.wallSliding = true; this.onWallDir = -1; this.lastWallTouch = Date.now(); }
                 }
+
             }
-            
+
         }
 
 
@@ -668,9 +711,15 @@ function gameLoop() {
         keys['l'] = false; // consume
         player.dash(player.vx >= 0 ? 1 : -1);
     }
+    // --- UPDATE PLATFORMS ---
+    for (const p of level.platforms) {
+        p.update(deltaTime, player);
+    }
+
 
     // --- UPDATE ENTITIES ---
     player.update(level.platforms, enemies, deltaTime);
+
     for (const e of enemies) e.update(level.platforms, player);
 
     // particles update
